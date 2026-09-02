@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>書籍借閱紀錄與未歸還追蹤工具</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- SheetJS CDN for parsing Excel client-side -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- 頁首區 -->
+    <header>
+      <div class="brand">
+        <div class="brand-icon">📚</div>
+        <h1>書籍借閱紀錄與未歸還追蹤工具</h1>
+      </div>
+      <div class="controls-header">
+        <button id="themeToggleBtn" class="btn-circle" title="切換深淺色主題">🌗</button>
+      </div>
+    </header>
+
+    <!-- 初始檔案匯入與設定區 (包含二欄排版) -->
+    <section id="initialLayout" class="upload-grid-layout">
+      <!-- 檔案上傳卡片 -->
+      <div id="uploadSection" class="upload-container-small">
+        <div class="upload-icon">📥</div>
+        <h3>第一步：上傳 Excel 檔案</h3>
+        <p>拖曳「物品圖書借用記錄.xlsx」至此處，或點擊下方按鈕</p>
+        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">選擇檔案</button>
+        <input type="file" id="fileInput" class="file-input" accept=".xlsx, .xls">
+      </div>
+
+      <!-- 區間設定卡片 (稍後會被動態移至報告區) -->
+      <div id="dateSelectorContainer">
+        <div id="dateSelectorPanel" class="date-selector-card card">
+          <h3 class="card-title" id="datePanelTitle">
+            <span class="card-title-icon">📅</span> 書籍統計時間區間
+          </h3>
+          <div class="date-form-grid">
+            <div class="date-form-group">
+              <label for="startDate">開始日期 (點選月曆)</label>
+              <input type="date" id="startDate">
+            </div>
+            <div class="date-form-group">
+              <label for="endDate">結束日期 (點選月曆)</label>
+              <input type="date" id="endDate">
+            </div>
+          </div>
+          <div class="presets-container">
+            <span class="presets-label">快速調整時間區間：</span>
+            <div class="presets-buttons">
+              <button type="button" class="btn-preset" id="preset30Btn">最近 30 天</button>
+              <button type="button" class="btn-preset" id="preset60Btn">最近 60 天</button>
+              <button type="button" class="btn-preset" id="presetAllFileBtn">整份檔案區間</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 載入動畫 -->
+    <section id="loaderSection" class="loader-wrapper">
+      <div class="loader"></div>
+      <p>正在讀取並解析 Excel 資料，請稍候...</p>
+    </section>
+
+    <!-- 主報告區域 (預設隱藏) -->
+    <main id="reportSection" style="display: none;">
+      <!-- 報告頂部控制列 (已改為整合單一卡片排版，消除比例失衡) -->
+      <section class="card report-control-card">
+        <div class="report-control-flex">
+          <!-- 移入後的日期選擇器會放在此處 -->
+          <div id="reportDateSelectorContainer"></div>
+          
+          <!-- 操作按鈕區 -->
+          <div class="report-actions-section">
+            <button id="copyMdBtn" class="btn btn-secondary">
+              <span>📋</span> 複製 Markdown 報告
+            </button>
+            <button id="printBtn" class="btn btn-primary" onclick="window.print()">
+              <span>🖨️</span> 列印報告 / 下載 PDF
+            </button>
+            <button id="reimportBtn" class="btn btn-secondary">
+              <span>🔄</span> 重新匯入
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 統計數據看板 -->
+      <section class="stats-grid">
+        <!-- 書籍借閱人次 (指定區間) -->
+        <div class="stat-card primary">
+          <div class="stat-icon-wrapper">📖</div>
+          <div class="stat-info">
+            <span id="totalBorrowTimes" class="stat-value">0</span>
+            <span class="stat-label">區間內書籍借閱人次</span>
+          </div>
+        </div>
+        <!-- 書籍逾期未還 (截止目前) -->
+        <div class="stat-card danger">
+          <div class="stat-icon-wrapper">📕</div>
+          <div class="stat-info">
+            <span id="bookOverdueCount" class="stat-value">0</span>
+            <span class="stat-label">書籍逾期未還</span>
+          </div>
+        </div>
+        <!-- 桌遊逾期未還 (截止目前) -->
+        <div class="stat-card warning">
+          <div class="stat-icon-wrapper">🎲</div>
+          <div class="stat-info">
+            <span id="bgOverdueCount" class="stat-value">0</span>
+            <span class="stat-label">桌遊逾期未還</span>
+          </div>
+        </div>
+        <!-- 其他逾期未還 (截止目前) -->
+        <div class="stat-card" style="background-color: var(--panel-bg); border-color: var(--panel-border);">
+          <div class="stat-icon-wrapper" style="background: linear-gradient(135deg, #6b7280, #4b5563);">📦</div>
+          <div class="stat-info">
+            <span id="otherOverdueCount" class="stat-value">0</span>
+            <span class="stat-label">其他品項逾期未還</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 月份統計與熱門書籍 -->
+      <div class="content-grid">
+        <!-- 月份借閱統計 -->
+        <section class="card">
+          <h3 class="card-title">
+            <span class="card-title-icon">📊</span> 月份借閱統計 (書籍)
+          </h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>月份</th>
+                  <th>借閱人次</th>
+                </tr>
+              </thead>
+              <tbody id="monthlyTableBody">
+                <!-- 動態插入 -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 熱門借閱排行 -->
+        <section class="card">
+          <h3 class="card-title">
+            <span class="card-title-icon">🏆</span> 熱門借閱排行榜 (Top 10 書籍)
+          </h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>書籍名稱</th>
+                  <th>借閱次數</th>
+                </tr>
+              </thead>
+              <tbody id="popularTableBody">
+                <!-- 動態插入 -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 未歸還與逾期物品追蹤名冊 -->
+      <section class="card">
+        <h3 class="card-title" style="border-bottom: 2px solid var(--panel-border); padding-bottom: 0.75rem;">
+          <span class="card-title-icon">📋</span> 未歸還與逾期物品追蹤名冊 <span style="font-size: 0.8125rem; font-weight: normal; color: var(--text-secondary); margin-left: 0.5rem;" id="referenceDateText">(計算基準日: --)</span>
+        </h3>
+        
+        <!-- 搜尋與篩選工具列 -->
+        <div class="search-filter-bar">
+          <div class="filter-controls">
+            <div class="date-input-group">
+              <label for="filterCategory">類別：</label>
+              <select id="filterCategory">
+                <option value="全部">全部類別</option>
+                <option value="書籍">書籍</option>
+                <option value="桌遊">桌遊</option>
+                <option value="其他物品">其他物品</option>
+              </select>
+            </div>
+            <div class="date-input-group">
+              <label for="filterStatus">狀態：</label>
+              <select id="filterStatus">
+                <option value="全部">全部未歸還</option>
+                <option value="已逾期">已逾期 (🚨)</option>
+                <option value="借用中">借用中未逾期 (⏳)</option>
+              </select>
+            </div>
+          </div>
+          <div class="search-wrapper">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="overdueSearch" class="search-input" placeholder="搜尋物品名稱或借用人...">
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>物品名稱</th>
+                <th>類別</th>
+                <th>借用人</th>
+                <th>借用時間</th>
+                <th>應歸還日期</th>
+                <th>狀態與逾期天數</th>
+                <th>借用基地</th>
+                <th style="text-align: center;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="unreturnedTableBody">
+              <!-- 動態插入 -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 詳細書籍借閱明細 -->
+      <section class="card">
+        <h3 class="card-title">
+          <span class="card-title-icon">📝</span> 區間內書籍借閱明細清單
+        </h3>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>書籍名稱</th>
+                <th>借用人</th>
+                <th>借用時間</th>
+                <th>歸還時間</th>
+                <th>借用基地</th>
+              </tr>
+            </thead>
+            <tbody id="detailsTableBody">
+              <!-- 動態插入 -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 12. 核心 JavaScript 處理邏輯 -->
+  <script>
+    // 全域資料儲存
+    let itemsData = [];     // 物品清單
+    let recordsData = [];   // 借用記錄
+    let bookNamesSet = new Set(); // 所有書籍的名稱 (用於區間統計)
+    let itemMap = {};       // 物品名稱 -> 物品詳細屬性 (用於比對分類與天數)
+    let isDataLoaded = false;
+    let referenceDate = new Date(); // 計算逾期基準日為今天
+
+    // DOM 元素
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const initialLayout = document.getElementById('initialLayout');
+    const uploadSection = document.getElementById('uploadSection');
+    const fileInput = document.getElementById('fileInput');
+    const loaderSection = document.getElementById('loaderSection');
+    const reportSection = document.getElementById('reportSection');
+    const startDateInput = document.getElementById('startDate');
+    const endDateInput = document.getElementById('endDate');
+    const copyMdBtn = document.getElementById('copyMdBtn');
+    const reimportBtn = document.getElementById('reimportBtn');
+    const referenceDateText = document.getElementById('referenceDateText');
+
+    // 篩選與搜尋元素
+    const filterCategory = document.getElementById('filterCategory');
+    const filterStatus = document.getElementById('filterStatus');
+    const overdueSearch = document.getElementById('overdueSearch');
+
+    // 1. 深淺色主題切換
+    themeToggleBtn.addEventListener('click', () => {
+      document.body.classList.toggle('light-theme');
+    });
+
+    // 2. 檔案拖曳與上傳事件
+    uploadSection.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadSection.classList.add('drag-over');
+    });
+
+    uploadSection.addEventListener('dragleave', () => {
+      uploadSection.classList.remove('drag-over');
+    });
+
+    uploadSection.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadSection.classList.remove('drag-over');
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        handleFile(files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (files.length > 0) {
+        handleFile(files[0]);
+      }
+    });
+
+    reimportBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      reportSection.style.display = 'none';
+      
+      // 將日期選擇卡片移回初始匯入區
+      const datePanel = document.getElementById('dateSelectorPanel');
+      document.getElementById('dateSelectorContainer').appendChild(datePanel);
+      
+      initialLayout.style.display = 'grid';
+      isDataLoaded = false;
+    });
+
+    // 3. 處理並解析 Excel 檔案
+    function handleFile(file) {
+      if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+        alert('請上傳 Excel 格式檔案 (.xlsx 或 .xls)！');
+        return;
+      }
+
+      initialLayout.style.display = 'none';
+      loaderSection.style.display = 'flex';
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+
+          // 讀取分頁
+          const sheetNames = workbook.SheetNames;
+          let itemsSheetName = sheetNames.find(name => name.includes('物品清單'));
+          let recordsSheetName = sheetNames.find(name => name.includes('借用記錄') || name.includes('借用紀錄'));
+
+          if (!itemsSheetName || !recordsSheetName) {
+            itemsSheetName = sheetNames[0];
+            recordsSheetName = sheetNames[1];
+          }
+
+          if (!itemsSheetName || !recordsSheetName) {
+            throw new Error('找不到對應的「物品清單」與「借用記錄」分頁，請檢查 Excel 工作表名稱！');
+          }
+
+          const itemsSheet = workbook.Sheets[itemsSheetName];
+          const recordsSheet = workbook.Sheets[recordsSheetName];
+
+          itemsData = XLSX.utils.sheet_to_json(itemsSheet);
+          recordsData = XLSX.utils.sheet_to_json(recordsSheet);
+
+          // 建立物品 Map 屬性快取
+          itemMap = {};
+          bookNamesSet.clear();
+          itemsData.forEach(item => {
+            const name = String(item['名稱'] || '').trim();
+            if (name) {
+              const code = String(item['編號'] || '').trim();
+              const category = String(item['分類'] || '').trim();
+              const borrowDays = item['借用天數'] !== undefined ? parseInt(item['借用天數']) : null;
+              const isConsumable = item['消秏品'] === 'V';
+              
+              // 判定類別
+              let parsedCategory = '其他物品';
+              if (category === '數位實中圖書館' || category === '教師備課用書' || code.toUpperCase().startsWith('B')) {
+                parsedCategory = '書籍';
+                bookNamesSet.add(name);
+              } else if (category === '桌遊牆') {
+                parsedCategory = '桌遊';
+              }
+
+              itemMap[name] = {
+                code: code,
+                category: parsedCategory,
+                borrowDays: borrowDays,
+                isConsumable: isConsumable
+              };
+            }
+          });
+
+          isDataLoaded = true;
+          loaderSection.style.display = 'none';
+          
+          // 將日期選擇卡片移到報告區置頂控制列
+          const datePanel = document.getElementById('dateSelectorPanel');
+          document.getElementById('reportDateSelectorContainer').appendChild(datePanel);
+          
+          reportSection.style.display = 'block';
+
+          // 更新基準日文字
+          referenceDate = new Date();
+          referenceDateText.innerText = `(計算基準日: ${formatDateOnly(referenceDate)} 今天)`;
+
+          // 執行初次統計
+          runAnalysis();
+        } catch (error) {
+          loaderSection.style.display = 'none';
+          initialLayout.style.display = 'grid';
+          alert('解析檔案失敗：' + error.message);
+          console.error(error);
+        }
+      };
+
+      reader.onerror = function() {
+        loaderSection.style.display = 'none';
+        initialLayout.style.display = 'grid';
+        alert('讀取檔案出錯！');
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+
+    // 4. 控制面板異動監聽
+    startDateInput.addEventListener('change', runAnalysis);
+    endDateInput.addEventListener('change', runAnalysis);
+    filterCategory.addEventListener('change', filterUnreturnedTable);
+    filterStatus.addEventListener('change', filterUnreturnedTable);
+    overdueSearch.addEventListener('input', filterUnreturnedTable);
+
+    // 4.1 時間快速選擇 Presets 監聽
+    document.getElementById('preset30Btn').addEventListener('click', () => {
+      const today = new Date();
+      const past30 = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+      startDateInput.value = formatDateOnly(past30);
+      endDateInput.value = formatDateOnly(today);
+      if (isDataLoaded) runAnalysis();
+    });
+
+    document.getElementById('preset60Btn').addEventListener('click', () => {
+      const today = new Date();
+      const past60 = new Date(today.getTime() - 60 * 24 * 60 * 60 * 1000);
+      startDateInput.value = formatDateOnly(past60);
+      endDateInput.value = formatDateOnly(today);
+      if (isDataLoaded) runAnalysis();
+    });
+
+    document.getElementById('presetAllFileBtn').addEventListener('click', () => {
+      setAllFileRange();
+    });
+
+    // 設定整份檔案時間區間
+    function setAllFileRange() {
+      if (!isDataLoaded || recordsData.length === 0) {
+        alert('請先匯入 Excel 檔案以讀取檔案區間！');
+        return;
+      }
+      
+      let minDate = null;
+      let maxDate = null;
+      
+      recordsData.forEach(record => {
+        const timeStr = record['借用時間'];
+        if (!timeStr) return;
+        
+        let recordDate;
+        if (timeStr instanceof Date) {
+          recordDate = timeStr;
+        } else if (typeof timeStr === 'number') {
+          recordDate = new Date((timeStr - 25569) * 86400 * 1000);
+          const tzOffset = recordDate.getTimezoneOffset() * 60000;
+          recordDate = new Date(recordDate.getTime() + tzOffset);
+        } else {
+          recordDate = new Date(timeStr);
+        }
+        
+        if (!isNaN(recordDate.getTime())) {
+          if (!minDate || recordDate < minDate) minDate = recordDate;
+          if (!maxDate || recordDate > maxDate) maxDate = recordDate;
+        }
+      });
+      
+      if (minDate && maxDate) {
+        startDateInput.value = formatDateOnly(minDate);
+        endDateInput.value = formatDateOnly(maxDate);
+        runAnalysis();
+      } else {
+        alert('檔案中無有效的借用時間資料！');
+      }
+    }
+
+    // 全域緩存以利篩選與複製報告
+    let activeUnreturnedList = [];
+
+    // 5. 核心分析與渲染函數
+    function runAnalysis() {
+      if (!isDataLoaded) return;
+
+      const startVal = startDateInput.value;
+      const endVal = endDateInput.value;
+
+      if (!startVal || !endVal) {
+        alert('請輸入完整的開始與結束日期！');
+        return;
+      }
+
+      const startDate = new Date(startVal + 'T00:00:00');
+      const endDate = new Date(endVal + 'T23:59:59');
+
+      if (startDate > endDate) {
+        alert('開始日期不能晚於結束日期！');
+        return;
+      }
+
+      // 5.1 篩選區間內書籍借閱人次
+      const recordsInPeriod = recordsData.filter(record => {
+        const timeStr = record['借用時間'];
+        if (!timeStr) return false;
+        
+        let recordDate;
+        if (timeStr instanceof Date) {
+          recordDate = timeStr;
+        } else if (typeof timeStr === 'number') {
+          recordDate = new Date((timeStr - 25569) * 86400 * 1000);
+          const tzOffset = recordDate.getTimezoneOffset() * 60000;
+          recordDate = new Date(recordDate.getTime() + tzOffset);
+        } else {
+          recordDate = new Date(timeStr);
+        }
+        
+        record._dateObj = recordDate; // 暫存 Date 物件
+        return recordDate >= startDate && recordDate <= endDate;
+      });
+
+      let totalBookBorrowTimes = 0;
+      const uniqueBooksBorrowed = new Set();
+      const bookBorrowDetailsInPeriod = [];
+
+      recordsInPeriod.forEach(record => {
+        const originalName = String(record['物品名稱'] || '').trim();
+        if (!originalName) return;
+
+        // 如果是書籍，加入區間統計
+        if (bookNamesSet.has(originalName)) {
+          totalBookBorrowTimes++;
+          uniqueBooksBorrowed.add(originalName);
+          bookBorrowDetailsInPeriod.push(record);
+        }
+      });
+
+      // 渲染書籍區間統計
+      document.getElementById('totalBorrowTimes').innerText = totalBookBorrowTimes;
+
+      // 生成月份列表統計
+      const monthlyData = generateMonthlyCounts(startDate, endDate, bookBorrowDetailsInPeriod);
+      renderMonthlyTable(monthlyData);
+
+      // 熱門書籍排行排行
+      const popularBooks = generatePopularRankings(bookBorrowDetailsInPeriod);
+      renderPopularTable(popularBooks);
+
+      // 書籍詳細借閱明細表
+      renderDetailsTable(bookBorrowDetailsInPeriod);
+
+
+      // 5.2 計算全時間之「未歸還與逾期項目」 (排除消耗品)
+      activeUnreturnedList = [];
+      let bookOverdueCount = 0;
+      let bgOverdueCount = 0;
+      let otherOverdueCount = 0;
+
+      recordsData.forEach(record => {
+        // 歸還時間欄位為空，表示尚未歸還
+        const hasReturned = record['歸還時間'] !== undefined && String(record['歸還時間']).trim() !== '';
+        if (hasReturned) return;
+
+        const originalName = String(record['物品名稱'] || '').trim();
+        if (!originalName) return;
+
+        // 取得品項屬性
+        const itemInfo = itemMap[originalName] || {
+          category: '其他物品',
+          borrowDays: 7,
+          isConsumable: false
+        };
+
+        // 排除消耗品
+        if (itemInfo.isConsumable) return;
+
+        // 解析借用時間
+        const timeStr = record['借用時間'];
+        if (!timeStr) return;
+        
+        let borrowDate;
+        if (timeStr instanceof Date) {
+          borrowDate = timeStr;
+        } else if (typeof timeStr === 'number') {
+          borrowDate = new Date((timeStr - 25569) * 86400 * 1000);
+          const tzOffset = borrowDate.getTimezoneOffset() * 60000;
+          borrowDate = new Date(borrowDate.getTime() + tzOffset);
+        } else {
+          borrowDate = new Date(timeStr);
+        }
+        
+        record._dateObj = borrowDate;
+
+        // 計算應歸還日期
+        const borrowDays = itemInfo.borrowDays !== null ? itemInfo.borrowDays : 7; // 無設定則預設 7 天
+        const dueDate = new Date(borrowDate.getTime() + borrowDays * 24 * 60 * 60 * 1000);
+
+        // 判斷是否逾期
+        const isOverdue = referenceDate > dueDate;
+        let overdueDays = 0;
+        let remainingDays = 0;
+
+        if (isOverdue) {
+          overdueDays = Math.floor((referenceDate - dueDate) / (24 * 60 * 60 * 1000));
+          
+          // 累加對應類別的逾期計數
+          if (itemInfo.category === '書籍') bookOverdueCount++;
+          else if (itemInfo.category === '桌遊') bgOverdueCount++;
+          else otherOverdueCount++;
+        } else {
+          remainingDays = Math.ceil((dueDate - referenceDate) / (24 * 60 * 60 * 1000));
+        }
+
+        activeUnreturnedList.push({
+          itemName: originalName,
+          category: itemInfo.category,
+          borrower: String(record['借用人'] || '').trim(),
+          borrowDate: borrowDate,
+          dueDate: dueDate,
+          isOverdue: isOverdue,
+          overdueDays: overdueDays,
+          remainingDays: remainingDays,
+          location: String(record['借用基地'] || '').trim()
+        });
+      });
+
+      // 渲染逾期看板卡片
+      document.getElementById('bookOverdueCount').innerText = bookOverdueCount;
+      document.getElementById('bgOverdueCount').innerText = bgOverdueCount;
+      document.getElementById('otherOverdueCount').innerText = otherOverdueCount;
+
+      // 渲染未歸還表格
+      filterUnreturnedTable();
+
+      // 緩存資料給 Markdown 複製使用
+      window.lastReportData = {
+        startDateStr: startVal,
+        endDateStr: endVal,
+        totalBorrowTimes: totalBookBorrowTimes,
+        uniqueBooksSize: uniqueBooksBorrowed.size,
+        monthlyData: monthlyData,
+        popularBooks: popularBooks,
+        bookOverdueCount: bookOverdueCount,
+        bgOverdueCount: bgOverdueCount,
+        otherOverdueCount: otherOverdueCount,
+        allUnreturned: activeUnreturnedList
+      };
+    }
+
+    // 6. 依據篩選條件重新渲染未歸還追蹤表格
+    function filterUnreturnedTable() {
+      if (!isDataLoaded) return;
+
+      const catFilter = filterCategory.value;
+      const statusFilter = filterStatus.value;
+      const query = overdueSearch.value.trim().toLowerCase();
+
+      const filtered = activeUnreturnedList.filter(item => {
+        // 類別過濾
+        if (catFilter !== '全部' && item.category !== catFilter) return false;
+        
+        // 狀態過濾
+        if (statusFilter === '已逾期' && !item.isOverdue) return false;
+        if (statusFilter === '借用中' && item.isOverdue) return false;
+
+        // 關鍵字搜尋 (物品名稱、借用人)
+        if (query) {
+          const matchName = item.itemName.toLowerCase().includes(query);
+          const matchBorrower = item.borrower.toLowerCase().includes(query);
+          return matchName || matchBorrower;
+        }
+
+        return true;
+      });
+
+      // 依照逾期天數/借用天數排序 (逾期多的在上面，接著是借用中快到期的)
+      filtered.sort((a, b) => {
+        if (a.isOverdue && b.isOverdue) return b.overdueDays - a.overdueDays;
+        if (a.isOverdue && !b.isOverdue) return -1;
+        if (!a.isOverdue && b.isOverdue) return 1;
+        return a.remainingDays - b.remainingDays;
+      });
+
+      const tbody = document.getElementById('unreturnedTableBody');
+      tbody.innerHTML = '';
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 2rem;">查無符合篩選條件的未歸還記錄</td></tr>`;
+        return;
+      }
+
+      filtered.forEach(item => {
+        const tr = document.createElement('tr');
+        
+        // 類別 Tag 樣式
+        let catClass = '';
+        if (item.category === '書籍') catClass = 'book';
+        if (item.category === '桌遊') catClass = 'boardgame';
+        const catTag = `<span class="category-tag ${catClass}">${item.category}</span>`;
+
+        // 狀態 Badge 樣式
+        let statusBadge = '';
+        if (item.isOverdue) {
+          statusBadge = `<span class="badge badge-overdue">🚨 逾期 ${item.overdueDays} 天</span>`;
+        } else {
+          statusBadge = `<span class="badge badge-active">⏳ 借用中 (剩 ${item.remainingDays} 天)</span>`;
+        }
+
+        // 複製按鈕帶入的參數
+        const borrowDateStr = formatDateOnly(item.borrowDate);
+        const dueDateStr = formatDateOnly(item.dueDate);
+        
+        tr.innerHTML = `
+          <td style="white-space: normal; font-weight: 600;">${item.itemName}</td>
+          <td>${catTag}</td>
+          <td><strong>${item.borrower}</strong></td>
+          <td>${formatDate(item.borrowDate)}</td>
+          <td>${dueDateStr}</td>
+          <td>${statusBadge}</td>
+          <td>${item.location}</td>
+          <td style="text-align: center;">
+            <button class="btn-action" title="複製催還訊息" onclick="copyReminderText('${item.borrower}', '${item.itemName.replace(/'/g, "\\'")}', '${borrowDateStr}', '${dueDateStr}', ${item.isOverdue}, ${item.overdueDays})">
+              💬 催還
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // 7. 一鍵複製催還通知簡訊
+    window.copyReminderText = function(borrower, itemName, borrowDateStr, dueDateStr, isOverdue, overdueDays) {
+      let msg = '';
+      if (isOverdue) {
+        msg = `${borrower} 您好，提醒您於 ${borrowDateStr} 借用的物品【${itemName}】已逾期 ${overdueDays} 天（應歸還日：${dueDateStr}），如已使用完畢，請撥冗歸還至基地，謝謝！`;
+      } else {
+        msg = `${borrower} 您好，您於 ${borrowDateStr} 借用了物品【${itemName}】（應歸還日：${dueDateStr}），提醒您使用完畢後記得歸還，謝謝！`;
+      }
+
+      navigator.clipboard.writeText(msg).then(() => {
+        alert(`提示訊息已複製至剪貼簿！\n\n內容：\n${msg}`);
+      }).catch(err => {
+        alert('自動複製失敗，請手動選取以下文字複製：\n\n' + msg);
+      });
+    };
+
+    // 8. 生成連續月份統計數組 (含 0 人次月份)
+    function generateMonthlyCounts(startDate, endDate, details) {
+      const countsMap = {};
+      const startYear = startDate.getFullYear();
+      const startMonth = startDate.getMonth();
+      const endYear = endDate.getFullYear();
+      const endMonth = endDate.getMonth();
+
+      let currYear = startYear;
+      let currMonth = startMonth;
+
+      while (currYear < endYear || (currYear === endYear && currMonth <= endMonth)) {
+        const monthKey = `${currYear}-${String(currMonth + 1).padStart(2, '0')}`;
+        countsMap[monthKey] = 0;
+        
+        currMonth++;
+        if (currMonth > 11) {
+          currMonth = 0;
+          currYear++;
+        }
+      }
+
+      details.forEach(record => {
+        const d = record._dateObj;
+        if (d) {
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          if (countsMap[monthKey] !== undefined) {
+            countsMap[monthKey]++;
+          }
+        }
+      });
+
+      return Object.keys(countsMap).sort().map(key => ({
+        month: key,
+        count: countsMap[key]
+      }));
+    }
+
+    // 9. 生成熱門書籍排行
+    function generatePopularRankings(details) {
+      const counts = {};
+      details.forEach(record => {
+        const name = String(record['物品名稱'] || '').trim();
+        counts[name] = (counts[name] || 0) + 1;
+      });
+
+      return Object.keys(counts)
+        .map(name => ({ name: name, count: counts[name] }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-hant'));
+    }
+
+    // 10. 表格渲染輔助函數 (月份、排行、明細)
+    function renderMonthlyTable(data) {
+      const tbody = document.getElementById('monthlyTableBody');
+      tbody.innerHTML = '';
+      let total = 0;
+
+      data.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${row.month}</strong></td>
+          <td style="text-align: center;">${row.count}</td>
+        `;
+        tbody.appendChild(tr);
+        total += row.count;
+      });
+
+      const trTotal = document.createElement('tr');
+      trTotal.style.fontWeight = 'bold';
+      trTotal.style.borderTop = '2px solid var(--panel-border)';
+      trTotal.innerHTML = `
+        <td>總計</td>
+        <td style="text-align: center;">${total}</td>
+      `;
+      tbody.appendChild(trTotal);
+    }
+
+    // 預設日期初始化：最近 30 天
+    function initDefaultDates() {
+      const today = new Date();
+      const past30 = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+      startDateInput.value = formatDateOnly(past30);
+      endDateInput.value = formatDateOnly(today);
+    }
+
+    function renderPopularTable(data) {
+      const tbody = document.getElementById('popularTableBody');
+      tbody.innerHTML = '';
+      
+      const top10 = data.slice(0, 10);
+      
+      if (top10.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--text-secondary); padding: 1.5rem;">該區間內無書籍借閱紀錄</td></tr>`;
+        return;
+      }
+
+      top10.forEach((row, index) => {
+        const tr = document.createElement('tr');
+        let rankBadge = index + 1;
+        if (index === 0) rankBadge = '🥇 1';
+        if (index === 1) rankBadge = '🥈 2';
+        if (index === 2) rankBadge = '🥉 3';
+
+        tr.innerHTML = `
+          <td style="font-weight: bold;">${rankBadge}</td>
+          <td style="white-space: normal;">${row.name}</td>
+          <td style="text-align: center; font-weight: bold;">${row.count}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      if (data.length > 10) {
+        const otherCount = data.length - 10;
+        const otherSum = data.slice(10).reduce((sum, item) => sum + item.count, 0);
+        const trOthers = document.createElement('tr');
+        trOthers.style.color = 'var(--text-secondary)';
+        trOthers.style.fontStyle = 'italic';
+        trOthers.innerHTML = `
+          <td>-</td>
+          <td>其餘 ${otherCount} 本書籍</td>
+          <td style="text-align: center;">各 ${data[10].count} ~ 1 次 (共 ${otherSum} 次)</td>
+        `;
+        tbody.appendChild(trOthers);
+      }
+    }
+
+    function renderDetailsTable(records) {
+      const tbody = document.getElementById('detailsTableBody');
+      tbody.innerHTML = '';
+
+      if (records.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 1.5rem;">該區間內無書籍借閱紀錄</td></tr>`;
+        return;
+      }
+
+      records.forEach((row, index) => {
+        const borrowDateStr = formatDate(row._dateObj);
+        
+        let returnDateStr = '未歸還';
+        if (row['歸還時間']) {
+          let retDate;
+          if (typeof row['歸還時間'] === 'number') {
+            retDate = new Date((row['歸還時間'] - 25569) * 86400 * 1000);
+          } else {
+            retDate = new Date(row['歸還時間']);
+          }
+          returnDateStr = formatDate(retDate);
+        }
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="color: var(--text-secondary);">${index + 1}</td>
+          <td style="white-space: normal;"><span class="category-tag book">📖</span> ${row['物品名稱'] || ''}</td>
+          <td><strong>${row['借用人'] || ''}</strong></td>
+          <td>${borrowDateStr}</td>
+          <td>${returnDateStr}</td>
+          <td>${row['借用基地'] || ''}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // 格式化日期時間
+    function formatDate(date) {
+      if (!date || isNaN(date.getTime())) return '';
+      const Y = date.getFullYear();
+      const M = String(date.getMonth() + 1).padStart(2, '0');
+      const D = String(date.getDate()).padStart(2, '0');
+      const h = String(date.getHours()).padStart(2, '0');
+      const m = String(date.getMinutes()).padStart(2, '0');
+      return `${Y}-${M}-${D} ${h}:${m}`;
+    }
+
+    // 僅格式化日期 (不含時間)
+    function formatDateOnly(date) {
+      if (!date || isNaN(date.getTime())) return '';
+      const Y = date.getFullYear();
+      const M = String(date.getMonth() + 1).padStart(2, '0');
+      const D = String(date.getDate()).padStart(2, '0');
+      return `${Y}-${M}-${D}`;
+    }
+
+    // 11. 一鍵複製 Markdown 報告 (更新納入未歸還逾期統計)
+    copyMdBtn.addEventListener('click', () => {
+      const data = window.lastReportData;
+      if (!data) return;
+
+      const dateToday = formatDateOnly(referenceDate);
+
+      let md = `# 書籍借閱紀錄與未歸還追蹤報告\n\n`;
+      md += `*   **書籍統計區間**：${data.startDateStr} 至 ${data.endDateStr}\n`;
+      md += `*   **逾期基準日期**：${dateToday} (今天)\n\n`;
+      md += `---\n\n`;
+      
+      md += `## 📊 書籍借閱摘要 (${data.startDateStr} ~ ${data.endDateStr})\n\n`;
+      md += `*   **書籍借閱總人次**：**${data.totalBorrowTimes}** 人次\n`;
+      md += `*   **不重複借閱書籍數**：**${data.uniqueBooksSize}** 本\n\n`;
+
+      md += `## 🚨 截止目前逾期未歸還統計 (計算至 ${dateToday})\n\n`;
+      md += `*   **書籍逾期數**：**${data.bookOverdueCount}** 件\n`;
+      md += `*   **桌遊逾期數**：**${data.bgOverdueCount}** 件\n`;
+      md += `*   **其他品項逾期數**：**${data.otherOverdueCount}** 件\n\n`;
+      md += `---\n\n`;
+      
+      md += `## 📈 書籍月份借閱統計\n\n`;
+      md += `| 月份 | 借閱人次 |\n`;
+      md += `| :--- | :---: |\n`;
+      data.monthlyData.forEach(row => {
+        md += `| **${row.month}** | ${row.count} |\n`;
+      });
+      md += `| **總計** | **${data.totalBorrowTimes}** |\n\n`;
+      md += `---\n\n`;
+
+      md += `## 🏆 熱門借閱書籍排行 (Top 10)\n\n`;
+      md += `| 書籍名稱 | 借閱次數 |\n`;
+      md += `| :--- | :---: |\n`;
+      const top3 = data.popularBooks.slice(0, 3);
+      top3.forEach(row => {
+        md += `| ${row.name} | ${row.count} |\n`;
+      });
+      if (data.popularBooks.length > 3) {
+        const remBooks = data.popularBooks.slice(3);
+        md += `| *其餘 ${remBooks.length} 本書籍* | 各 ${remBooks[0].count} ~ 1 次 |\n`;
+      }
+      md += `\n---\n\n`;
+
+      // 逾期名冊明細
+      const overdueList = data.allUnreturned.filter(item => item.isOverdue);
+      md += `## 🚨 逾期未歸還物品明細 (共 ${overdueList.length} 筆)\n\n`;
+      if (overdueList.length === 0) {
+        md += `目前無逾期未歸還項目。\n\n`;
+      } else {
+        md += `| 物品名稱 | 類別 | 借用人 | 借用日期 | 應歸還日期 | 逾期天數 | 借用基地 |\n`;
+        md += `| :--- | :--- | :--- | :--- | :--- | :---: | :--- |\n`;
+        overdueList.forEach(item => {
+          md += `| ${item.itemName} | ${item.category} | ${item.borrower} | ${formatDateOnly(item.borrowDate)} | ${formatDateOnly(item.dueDate)} | 逾期 ${item.overdueDays} 天 | ${item.location} |\n`;
+        });
+        md += `\n`;
+      }
+
+      navigator.clipboard.writeText(md).then(() => {
+        alert('Markdown 報告已成功複製至剪貼簿！');
+      }).catch(err => {
+        alert('無法自動複製，請至主控台手動複製。');
+        console.log(md);
+      });
+    });
+
+    // 頁面加載初始化預設時間
+    initDefaultDates();
+  </script>
+</body>
+</html>
